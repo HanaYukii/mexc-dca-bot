@@ -1,0 +1,6 @@
+.env
+trades.jsonl
+__pycache__/
+*.pyc
+.venv/
+dist/

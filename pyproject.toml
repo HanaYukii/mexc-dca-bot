@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "mexc-dca-bot"
+version = "0.1.0"
+description = "MEXC spot DCA (Dollar-Cost Averaging) bot with Telegram notifications"
+authors = ["PulsarisAI"]
+readme = "README.md"
+packages = [{include = "mexc_dca"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+ccxt = "^4.0"
+apscheduler = "^3.10"
+python-dotenv = "^1.0"
+pyyaml = "^6.0"
+python-telegram-bot = "^21.0"
+
+[tool.poetry.scripts]
+mexc-dca = "mexc_dca.__main__:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
