@@ -6,7 +6,7 @@ coins:
     amount_usdt: 50
     schedule: "0 9 * * *"         # Daily at 9:00 AM
     limit_offset_pct: 0.1         # Limit price = market * (1 - 0.1%)
-    timeout_minutes: 5            # Cancel limit order after 5 min
+    timeout_minutes: 120          # Cancel limit order after 2 hours
     withdraw:
       enabled: false
       address: "bc1q_your_cold_wallet_address"

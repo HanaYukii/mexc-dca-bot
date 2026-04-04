@@ -12,14 +12,14 @@ from .scheduler import build_scheduler
 from .strategy.dca import execute_dca
 
 
-def run_once(config, symbol: str, amount_usdt: float) -> None:
+def run_once(config, symbol: str, amount_usdt: float, timeout_minutes: int = 15) -> None:
     """Execute a single DCA buy immediately."""
     coin = CoinConfig(
         symbol=symbol,
         amount_usdt=amount_usdt,
         schedule="",
         limit_offset_pct=0.1,
-        timeout_minutes=3,
+        timeout_minutes=timeout_minutes,
     )
     # Override from config if this coin exists
     for c in config.coins:
@@ -43,6 +43,7 @@ def main() -> None:
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--once", metavar="SYMBOL", help="Buy once immediately, e.g. --once BTC/USDT")
     parser.add_argument("--amount", type=float, help="USDT amount for --once (default: from config or 5)")
+    parser.add_argument("--timeout", type=int, help="Limit order timeout in minutes for --once (default: 15)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -65,8 +66,9 @@ def main() -> None:
     # Single buy mode
     if args.once:
         amount = args.amount or 5.0
-        log.info("=== ONE-TIME BUY: %s %.2f USDT ===", args.once, amount)
-        run_once(config, args.once, amount)
+        timeout = args.timeout or 15
+        log.info("=== ONE-TIME BUY: %s %.2f USDT (timeout=%dm) ===", args.once, amount, timeout)
+        run_once(config, args.once, amount, timeout)
         return
 
     if not config.coins:

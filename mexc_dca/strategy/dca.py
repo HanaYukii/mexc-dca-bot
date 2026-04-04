@@ -10,7 +10,7 @@ from ..notifier import Notifier
 
 log = logging.getLogger(__name__)
 
-POLL_INTERVAL = 15  # seconds
+POLL_INTERVAL = 60  # seconds
 
 
 def execute_dca(
