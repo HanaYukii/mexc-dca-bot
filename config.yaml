@@ -1,31 +1,27 @@
 # MEXC DCA Bot Configuration
 # API keys are in .env (not here!)
 
+# Schedule: Tuesday & Friday at 9:00 AM (UTC+8)
+# Total per buy: 225 USDT (BTC 60% / ETH 25% / BNB 15%)
+
 coins:
   - symbol: BTC/USDT
-    amount_usdt: 50
-    schedule: "0 9 * * *"         # Daily at 9:00 AM
-    limit_offset_pct: 0.1         # Limit price = market * (1 - 0.1%)
-    timeout_minutes: 120          # Cancel limit order after 2 hours
-    withdraw:
-      enabled: false
-      address: "bc1q_your_cold_wallet_address"
-      network: BTC
-      threshold_usdt: 500         # Withdraw when accumulated >= $500
+    amount_usdt: 135
+    schedule: "0 9 * * 2,5"        # Tue & Fri at 9:00 AM
+    limit_offset_pct: 0.5          # 0.5% below market
 
   - symbol: ETH/USDT
-    amount_usdt: 30
-    schedule: "0 9 * * 1"         # Every Monday at 9:00 AM
-    limit_offset_pct: 0.15
-    timeout_minutes: 5
-    withdraw:
-      enabled: false
-      address: "0x_your_cold_wallet_address"
-      network: ETH
-      threshold_usdt: 300
+    amount_usdt: 56.25
+    schedule: "0 9 * * 2,5"
+    limit_offset_pct: 0.5
+
+  - symbol: BNB/USDT
+    amount_usdt: 33.75
+    schedule: "0 9 * * 2,5"
+    limit_offset_pct: 0.5
 
 telegram:
-  chat_id: ""                     # Your Telegram chat ID
-  weekly_summary_day: 1           # 0=Mon, 1=Tue, ... 6=Sun
+  chat_id: ""                      # Your Telegram chat ID
+  weekly_summary_day: 6            # Sunday
 
 log_file: trades.jsonl

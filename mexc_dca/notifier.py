@@ -33,16 +33,12 @@ class Notifier:
         except Exception as e:
             log.error("Telegram send failed: %s", e)
 
-    def send_order_filled(self, entry: dict[str, Any]) -> None:
-        order_type = entry.get("order_type", "unknown")
-        emoji = "L" if order_type == "limit" else "M"
+    def send_order_placed(self, entry: dict[str, Any]) -> None:
         text = (
-            f"<b>[{emoji}] {entry.get('symbol')} Buy</b>\n"
-            f"Type: {order_type}\n"
+            f"<b>[Limit] {entry.get('symbol')} Order Placed</b>\n"
             f"Amount: {entry.get('amount', 0):.8f}\n"
             f"Price: {entry.get('price', 0):.8f}\n"
-            f"Cost: {entry.get('cost', 0):.4f} USDT\n"
-            f"Fee: {entry.get('fee', 0)}"
+            f"Cost: {entry.get('cost', 0):.4f} USDT"
         )
         self._send(text)
 
