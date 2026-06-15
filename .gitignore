@@ -1,5 +1,8 @@
 .env
 trades.jsonl
+grid_trades.jsonl
+grid_state.json
+*.log
 __pycache__/
 *.pyc
 .venv/

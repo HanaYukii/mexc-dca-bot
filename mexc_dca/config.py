@@ -27,6 +27,17 @@ class CoinConfig:
 
 
 @dataclass
+class GridConfig:
+    symbol: str = "ETH/USDT"
+    order_usdt: float = 50.0
+    buy_offset_pct: float = 0.3      # place buy this % below market (maker)
+    profit_pct: float = 1.0          # sell this % above buy fill price (maker)
+    poll_interval_sec: int = 30
+    log_file: str = "grid_trades.jsonl"
+    state_file: str = "grid_state.json"
+
+
+@dataclass
 class TelegramConfig:
     enabled: bool = False
     bot_token: str = ""
@@ -40,6 +51,7 @@ class AppConfig:
     api_secret: str
     coins: list[CoinConfig]
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    grid: GridConfig | None = None
     dry_run: bool = False
     log_file: str = "trades.jsonl"
 
@@ -77,6 +89,19 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
             )
         )
 
+    grid = None
+    g = raw.get("grid")
+    if g:
+        grid = GridConfig(
+            symbol=g.get("symbol", "ETH/USDT"),
+            order_usdt=float(g.get("order_usdt", 50)),
+            buy_offset_pct=float(g.get("buy_offset_pct", 0.3)),
+            profit_pct=float(g.get("profit_pct", 1.0)),
+            poll_interval_sec=int(g.get("poll_interval_sec", 30)),
+            log_file=g.get("log_file", "grid_trades.jsonl"),
+            state_file=g.get("state_file", "grid_state.json"),
+        )
+
     tg_raw = raw.get("telegram", {})
     telegram = TelegramConfig(
         enabled=bool(tg_token and tg_raw.get("chat_id")),
@@ -90,5 +115,6 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         api_secret=api_secret,
         coins=coins,
         telegram=telegram,
+        grid=grid,
         log_file=raw.get("log_file", "trades.jsonl"),
     )

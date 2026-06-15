@@ -51,6 +51,14 @@ class Notifier:
         )
         self._send(text)
 
+    def send_grid_cycle(self, symbol: str, profit: float, total: float, cycles: int) -> None:
+        text = (
+            f"<b>[Grid] {symbol} cycle #{cycles} done</b>\n"
+            f"Profit: {profit:+.4f} USDT\n"
+            f"Total realized: {total:+.4f} USDT"
+        )
+        self._send(text)
+
     def send_error(self, message: str) -> None:
         text = f"<b>Error</b>\n<pre>{message[:500]}</pre>"
         self._send(text)

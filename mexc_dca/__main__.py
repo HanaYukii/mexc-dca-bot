@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
+from pathlib import Path
 
 from .config import CoinConfig, load_config
 from .exchange import Exchange
@@ -10,6 +12,7 @@ from .logger import TradeLogger
 from .notifier import Notifier
 from .scheduler import build_scheduler
 from .strategy.dca import execute_dca
+from .strategy.grid import GridFlip
 
 
 def show_stats(config) -> None:
@@ -70,6 +73,60 @@ def show_stats(config) -> None:
     print("\n" + "=" * 70 + "\n")
 
 
+def run_grid(config) -> None:
+    """Run the single-slot flip grid strategy (continuous loop)."""
+    if not config.grid:
+        raise SystemExit("No [grid] section in config.yaml")
+    exchange = Exchange(config)
+    trade_logger = TradeLogger(config.grid.log_file)
+    notifier = Notifier(config.telegram)
+    GridFlip(exchange, config.grid, trade_logger, notifier).run()
+
+
+def show_grid_stats(config) -> None:
+    """Show realized profit and live state of the two-sided grid."""
+    if not config.grid:
+        raise SystemExit("No [grid] section in config.yaml")
+    trades = TradeLogger(config.grid.log_file).read_all()
+    sells = [t for t in trades if t.get("side") == "sell" and t.get("strategy") == "grid"]
+    buys = [t for t in trades if t.get("side") == "buy" and t.get("strategy") == "grid"]
+    total = sum(t.get("profit", 0.0) for t in sells)
+
+    print("\n" + "=" * 56)
+    print("  Grid (two-sided) Stats")
+    print("=" * 56)
+    print(f"  Buys filled:      {len(buys)}")
+    print(f"  Sells filled:     {len(sells)}")
+    print(f"  Realized profit:  {total:+.4f} USDT")
+    if sells:
+        wins = [t for t in sells if t.get("profit", 0) > 0]
+        print(f"  Avg per sell:     {total / len(sells):+.4f} USDT")
+        print(f"  Win rate:         {len(wins)}/{len(sells)}")
+        print(f"  First sell:       {sells[0].get('timestamp', '')[:19]}")
+        print(f"  Last sell:        {sells[-1].get('timestamp', '')[:19]}")
+
+    state_path = Path(config.grid.state_file)
+    if state_path.exists():
+        try:
+            st = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            st = {}
+        base = config.grid.symbol.split("/")[0]
+        inv = st.get("inv_amount") or 0.0
+        inv_cost = st.get("inv_cost") or 0.0
+        avg_cost = inv_cost / inv if inv > 1e-12 else 0.0
+        print(f"\n  Inventory:        {inv:.8f} {base} (avg cost {avg_cost:.2f} USDT)")
+        if st.get("buy_order_id"):
+            print(f"  Open BUY:         {st.get('buy_amount') or 0:.8f} @ {st.get('buy_price') or 0:.6f}")
+        else:
+            print("  Open BUY:         (none — will place next tick)")
+        if st.get("sell_order_id"):
+            print(f"  Open SELL:        {st.get('sell_amount') or 0:.8f} @ {st.get('sell_price') or 0:.6f}")
+        else:
+            print("  Open SELL:        (none — will place next tick)")
+    print("=" * 56 + "\n")
+
+
 def run_once(config, symbol: str, amount_usdt: float, timeout_minutes: int = 15) -> None:
     """Execute a single DCA buy immediately."""
     coin = CoinConfig(
@@ -103,6 +160,8 @@ def main() -> None:
     parser.add_argument("--amount", type=float, help="USDT amount for --once (default: from config or 5)")
     parser.add_argument("--timeout", type=int, help="Limit order timeout in minutes for --once (default: 15)")
     parser.add_argument("--stats", action="store_true", help="Show portfolio stats (avg price, total cost, P&L)")
+    parser.add_argument("--grid", action="store_true", help="Run the single-slot flip grid strategy (loop)")
+    parser.add_argument("--grid-stats", action="store_true", help="Show grid realized profit stats")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -125,6 +184,16 @@ def main() -> None:
     # Stats mode
     if args.stats:
         show_stats(config)
+        return
+
+    # Grid stats
+    if args.grid_stats:
+        show_grid_stats(config)
+        return
+
+    # Grid strategy (continuous loop)
+    if args.grid:
+        run_grid(config)
         return
 
     # Single buy mode

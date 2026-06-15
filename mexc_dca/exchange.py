@@ -35,8 +35,25 @@ class Exchange:
                     raise
                 time.sleep(wait)
 
+    def _ensure_markets(self) -> None:
+        if not self.client.markets:
+            self._retry(self.client.load_markets)
+
+    def amount_to_precision(self, symbol: str, amount: float) -> str:
+        self._ensure_markets()
+        return self.client.amount_to_precision(symbol, amount)
+
+    def price_to_precision(self, symbol: str, price: float) -> str:
+        self._ensure_markets()
+        return self.client.price_to_precision(symbol, price)
+
     def fetch_ticker(self, symbol: str) -> dict:
         return self._retry(self.client.fetch_ticker, symbol)
+
+    def fetch_open_orders(self, symbol: str) -> list:
+        if self.dry_run:
+            return []
+        return self._retry(self.client.fetch_open_orders, symbol)
 
     def get_usdt_balance(self) -> float:
         balance = self._retry(self.client.fetch_balance)
@@ -52,6 +69,13 @@ class Exchange:
             log.info("[DRY RUN] Would place limit buy")
             return {"id": "dry-run", "status": "open", "price": price, "amount": amount, "filled": 0}
         return self._retry(self.client.create_limit_buy_order, symbol, amount, price)
+
+    def create_limit_sell(self, symbol: str, amount: float, price: float) -> dict:
+        log.info("Limit sell: %s amount=%.8f price=%.8f", symbol, amount, price)
+        if self.dry_run:
+            log.info("[DRY RUN] Would place limit sell")
+            return {"id": "dry-run-sell", "status": "open", "price": price, "amount": amount, "filled": 0}
+        return self._retry(self.client.create_limit_sell_order, symbol, amount, price)
 
     def create_market_buy(self, symbol: str, amount_usdt: float) -> dict:
         log.info("Market buy: %s cost=%.4f USDT", symbol, amount_usdt)
