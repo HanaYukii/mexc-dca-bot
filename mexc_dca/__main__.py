@@ -93,7 +93,7 @@ def show_grid_stats(config) -> None:
     total = sum(t.get("profit", 0.0) for t in sells)
 
     print("\n" + "=" * 56)
-    print("  Grid (two-sided) Stats")
+    print("  Grid (paired-flip) Stats")
     print("=" * 56)
     print(f"  Buys filled:      {len(buys)}")
     print(f"  Sells filled:     {len(sells)}")
@@ -111,19 +111,17 @@ def show_grid_stats(config) -> None:
             st = json.loads(state_path.read_text(encoding="utf-8"))
         except Exception:
             st = {}
-        base = config.grid.symbol.split("/")[0]
-        inv = st.get("inv_amount") or 0.0
-        inv_cost = st.get("inv_cost") or 0.0
-        avg_cost = inv_cost / inv if inv > 1e-12 else 0.0
-        print(f"\n  Inventory:        {inv:.8f} {base} (avg cost {avg_cost:.2f} USDT)")
+        lots = st.get("lots") or []
+        deployed = sum(l.get("buy_price", 0) * l.get("amount", 0) for l in lots)
+        print(f"\n  Open lots:        {len(lots)}/{config.grid.max_lots}  (~{deployed:.2f} USDT deployed)")
+        for l in sorted(lots, key=lambda x: x.get("buy_price", 0), reverse=True):
+            tgt = l.get("sell_price") or l.get("buy_price", 0) * (1 + config.grid.profit_pct / 100)
+            armed = "sell armed" if l.get("sell_order_id") else "sell pending"
+            print(f"    lot buy {l.get('buy_price', 0):.2f} -> sell {tgt:.2f}  ({armed})")
         if st.get("buy_order_id"):
-            print(f"  Open BUY:         {st.get('buy_amount') or 0:.8f} @ {st.get('buy_price') or 0:.6f}")
+            print(f"  Working BUY:      {st.get('buy_amount') or 0:.8f} @ {st.get('buy_price') or 0:.6f}")
         else:
-            print("  Open BUY:         (none — will place next tick)")
-        if st.get("sell_order_id"):
-            print(f"  Open SELL:        {st.get('sell_amount') or 0:.8f} @ {st.get('sell_price') or 0:.6f}")
-        else:
-            print("  Open SELL:        (none — will place next tick)")
+            print("  Working BUY:      (none)")
     print("=" * 56 + "\n")
 
 

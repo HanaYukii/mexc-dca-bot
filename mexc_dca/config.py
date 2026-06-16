@@ -30,8 +30,10 @@ class CoinConfig:
 class GridConfig:
     symbol: str = "ETH/USDT"
     order_usdt: float = 50.0
-    buy_offset_pct: float = 0.3      # place buy this % below market (maker)
-    profit_pct: float = 1.0          # sell this % above buy fill price (maker)
+    buy_offset_pct: float = 0.3      # first entry buy this % below market (maker)
+    profit_pct: float = 1.0          # each lot sells this % above its buy (maker)
+    spacing_pct: float = 1.0         # min gap between consecutive buy lots
+    max_lots: int = 6                # max concurrent open lots (caps deployed capital)
     poll_interval_sec: int = 30
     log_file: str = "grid_trades.jsonl"
     state_file: str = "grid_state.json"
@@ -97,6 +99,8 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
             order_usdt=float(g.get("order_usdt", 50)),
             buy_offset_pct=float(g.get("buy_offset_pct", 0.3)),
             profit_pct=float(g.get("profit_pct", 1.0)),
+            spacing_pct=float(g.get("spacing_pct", 1.0)),
+            max_lots=int(g.get("max_lots", 6)),
             poll_interval_sec=int(g.get("poll_interval_sec", 30)),
             log_file=g.get("log_file", "grid_trades.jsonl"),
             state_file=g.get("state_file", "grid_state.json"),

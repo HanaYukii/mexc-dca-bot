@@ -1,20 +1,18 @@
-"""Two-sided single-level grid.
+"""Paired-flip grid.
 
-Keeps ONE buy order and ONE sell order working at the same time:
-  * BUY  leg: limit buy of order_usdt        at mid*(1 - buy_offset%)  (maker, no fee)
-  * SELL leg: limit sell of order_usdt-worth at mid*(1 + profit%)      (maker, no fee)
+Each buy that fills becomes a "lot" with its own take-profit sell at
+buy_price*(1+profit%). Multiple lots run concurrently (up to max_lots), spaced at
+least spacing% apart, so a slide lays a ladder of lots and every lot exits at its
+own +profit%% on the bounce -- no stranded lone sell, no clustered buys.
 
-When a leg fills it is re-placed around the new mid on the next tick, so the bot
-continuously buys dips and sells rips, capturing the spread. Inventory is shared:
-buy fills add base coin, sell fills remove it, each guarded by the free balance.
+  * one working entry BUY at a time, below market (or below the lowest open lot)
+  * on buy fill  -> open a lot, place its paired SELL at +profit%%
+  * on sell fill -> book exact profit (sell-buy)*amount, close the lot, free a slot
+  * stops buying once max_lots are open (bounds capital in a downtrend)
 
-Profit uses a running average cost. On first start the existing holdings are
-seeded at the current market price, so selling them +profit%% books +profit%% as
-realized profit (matches the "sell 1%% above market" intent).
-
-State is persisted to JSON and reconciled against the exchange on startup, so the
-loop survives restarts, manual cancels, and the handoff from the old flip logic.
-Dry-run simulates fills against the live ticker (paper trading).
+Only flips lots it opens; pre-existing holdings are left untouched. Profit is
+exact per lot (no average-cost needed). State persists to JSON and is reconciled
+against the exchange on startup. Dry-run simulates fills against the live ticker.
 """
 from __future__ import annotations
 
@@ -51,9 +49,8 @@ class GridFlip:
     # ----- state persistence -----
     def _default_state(self) -> dict:
         return {
+            "lots": [],  # each: {buy_price, amount, sell_order_id, sell_price}
             "buy_order_id": None, "buy_price": None, "buy_amount": None,
-            "sell_order_id": None, "sell_price": None, "sell_amount": None,
-            "inv_amount": 0.0, "inv_cost": 0.0, "seeded": False,
             "buys_filled": 0, "sells_filled": 0, "realized_profit": 0.0,
         }
 
@@ -76,185 +73,191 @@ class GridFlip:
     def _mid(self) -> float:
         return self.ex.fetch_ticker(self.cfg.symbol)["last"]
 
-    # ----- startup: seed cost basis + adopt existing orders -----
-    def _seed_inventory(self, mid: float) -> None:
-        if self.state["seeded"]:
-            return
-        held = self.ex.get_balance(self.base)  # read-only, works in dry-run too
-        self.state.update(inv_amount=held, inv_cost=held * mid, seeded=True)
-        self._save_state()
-        log.info("Seeded inventory: %.8f %s @ %.6f (cost basis %.2f USDT)",
-                 held, self.base, mid, held * mid)
-
-    def _reconcile(self) -> None:
-        """Adopt existing open orders so a restart/handoff never double-places.
-
-        Keeps at most one order per side (cancels any extras) and picks the order
-        up into state so we manage it instead of placing a fresh duplicate.
-        """
-        try:
-            open_orders = self.ex.fetch_open_orders(self.cfg.symbol)
-        except Exception as e:
-            log.warning("Reconcile: could not fetch open orders: %s", e)
-            return
-        buys = [o for o in open_orders if o.get("side") == "buy"]
-        sells = [o for o in open_orders if o.get("side") == "sell"]
-        for extra in buys[1:] + sells[1:]:
-            log.info("Reconcile: cancelling extra %s order %s", extra.get("side"), extra.get("id"))
-            try:
-                self.ex.cancel_order(extra["id"], self.cfg.symbol)
-            except Exception as e:
-                log.warning("Reconcile: cancel failed: %s", e)
-        if buys:
-            o = buys[0]
-            self.state.update(buy_order_id=o["id"], buy_price=float(o["price"]),
-                              buy_amount=float(o["amount"]))
-            log.info("Reconcile: adopted buy %s @ %.6f x %.8f",
-                     o["id"], float(o["price"]), float(o["amount"]))
-        if sells:
-            o = sells[0]
-            self.state.update(sell_order_id=o["id"], sell_price=float(o["price"]),
-                              sell_amount=float(o["amount"]))
-            log.info("Reconcile: adopted sell %s @ %.6f x %.8f",
-                     o["id"], float(o["price"]), float(o["amount"]))
-        self._save_state()
-
     # ----- main loop -----
     def run(self) -> None:
         c = self.cfg
         mode = "PAPER (dry-run)" if self.dry else "LIVE"
         log.info(
-            "=== Grid 2-sided [%s]: %s, %.2f USDT/order, buy -%.2f%%, sell +%.2f%%, poll %ds ===",
-            mode, c.symbol, c.order_usdt, c.buy_offset_pct, c.profit_pct, c.poll_interval_sec,
+            "=== Grid paired-flip [%s]: %s, %.2f USDT/lot, entry -%.2f%%, profit +%.2f%%, "
+            "spacing %.2f%%, max %d lots, poll %ds ===",
+            mode, c.symbol, c.order_usdt, c.buy_offset_pct, c.profit_pct,
+            c.spacing_pct, c.max_lots, c.poll_interval_sec,
         )
-        self._seed_inventory(self._mid())
-        if not self.dry:
-            self._reconcile()
-        log.info("Resuming: inv=%.8f %s, buys=%d, sells=%d, realized=%+.4f USDT",
-                 self.state["inv_amount"], self.base, self.state["buys_filled"],
+        log.info("Resuming: %d open lots, buys=%d, sells=%d, realized=%+.4f USDT",
+                 len(self.state["lots"]), self.state["buys_filled"],
                  self.state["sells_filled"], self.state["realized_profit"])
         while True:
             try:
-                self._handle_buy()
-                self._handle_sell()
+                self._manage_buy()
+                self._manage_lots()
             except Exception as e:
                 log.error("Grid tick error: %s", e)
                 self.notifier.send_error(f"Grid error: {e}")
             time.sleep(c.poll_interval_sec)
 
-    # ----- buy leg -----
-    def _handle_buy(self) -> None:
-        s, sym = self.state, self.cfg.symbol
-        if s["buy_order_id"] is None:
-            self._place_buy()
+    # ----- entry buy -----
+    def _manage_buy(self) -> None:
+        s = self.state
+        if s["buy_order_id"] is not None:
+            if self._check_buy():            # still resting on the book
+                self._recenter_buy_if_stale()
             return
+        if len(s["lots"]) >= self.cfg.max_lots:
+            return  # at capacity — stop accumulating
+        self._place_buy()
+
+    def _recenter_buy_if_stale(self) -> None:
+        """If price ran up and left the resting entry buy more than a step below
+        where it should sit, cancel and re-place it near the market so the grid
+        keeps engaging (mirror of not letting a sell strand). Only moves the buy
+        UP toward price; in a dip the buy is already near/above mid and fills."""
+        s, sym = self.state, self.cfg.symbol
+        mid = self._mid()
+        ideal = mid * (1 - self.cfg.buy_offset_pct / 100)
+        if s["lots"]:
+            lowest = min(l["buy_price"] for l in s["lots"])
+            ideal = min(ideal, lowest * (1 - self.cfg.spacing_pct / 100))
+        if s["buy_price"] >= ideal * (1 - self.cfg.spacing_pct / 100):
+            return  # within one step of ideal — leave it resting
+        log.info("Re-centering entry buy: %.6f stale vs ideal %.6f (mid %.6f)",
+                 s["buy_price"], ideal, mid)
+        if not self.dry:
+            try:
+                self.ex.cancel_order(s["buy_order_id"], sym)
+            except Exception as e:
+                log.warning("Re-center cancel failed: %s", e)
+                return
+        s.update(buy_order_id=None, buy_price=None, buy_amount=None)
+        self._save_state()
+        self._place_buy()
+
+    def _place_buy(self) -> None:
+        s, sym = self.state, self.cfg.symbol
+        mid = self._mid()
+        entry = mid * (1 - self.cfg.buy_offset_pct / 100)
+        if s["lots"]:
+            lowest = min(l["buy_price"] for l in s["lots"])
+            entry = min(entry, lowest * (1 - self.cfg.spacing_pct / 100))
+        price = float(self.ex.price_to_precision(sym, entry))
+        amount = float(self.ex.amount_to_precision(sym, self.cfg.order_usdt / price))
+        if not self.dry:
+            usdt = self.ex.get_usdt_balance()
+            if usdt < self.cfg.order_usdt:
+                log.warning("Buy idle: USDT %.2f < %.2f", usdt, self.cfg.order_usdt)
+                return
+            oid = self.ex.create_limit_buy(sym, amount, price)["id"]
+        else:
+            oid = f"paper-buy-{s['buys_filled']}"
+        s.update(buy_order_id=oid, buy_price=price, buy_amount=amount)
+        self._save_state()
+        log.info("Buy placed: %s @ %.6f x %.8f (mid %.6f, lots=%d, id=%s)",
+                 sym, price, amount, mid, len(s["lots"]), oid)
+
+    def _check_buy(self) -> bool:
+        """Return True if the buy is still resting (open), False once it has
+        filled (opened a lot) or was cancelled (leg cleared)."""
+        s, sym = self.state, self.cfg.symbol
         if self.dry:
             if self._mid() > s["buy_price"]:
-                return
+                return True
             filled, avg = s["buy_amount"], s["buy_price"]
         else:
             try:
                 o = self.ex.fetch_order(s["buy_order_id"], sym)
             except Exception as e:
                 log.warning("Could not fetch buy order: %s", e)
-                return
+                return True
             st = o.get("status")
             if st == "canceled":
-                log.warning("Buy canceled externally; clearing leg")
+                log.warning("Buy canceled externally; clearing entry")
                 s.update(buy_order_id=None, buy_price=None, buy_amount=None)
                 self._save_state()
-                return
+                return False
             if st != "closed":
-                return
+                return True
             filled = o.get("filled") or s["buy_amount"]
             avg = o.get("average") or s["buy_price"]
 
-        cost = filled * avg
-        s["inv_amount"] += filled
-        s["inv_cost"] += cost
         s["buys_filled"] += 1
+        s["lots"].append({"buy_price": avg, "amount": filled,
+                          "sell_order_id": None, "sell_price": None})
         self.logger.record(strategy="grid", symbol=sym, side="buy", order_type="limit",
-                           order_id=s["buy_order_id"], amount=filled, price=avg, cost=cost,
-                           fee=0, status="filled")
-        log.info("BUY FILLED: %s @ %.6f x %.8f (cost %.4f USDT, inv now %.8f %s)",
-                 sym, avg, filled, cost, s["inv_amount"], self.base)
+                           order_id=s["buy_order_id"], amount=filled, price=avg,
+                           cost=filled * avg, fee=0, status="filled")
+        log.info("BUY FILLED: %s @ %.6f x %.8f -> opened lot (%d now open)",
+                 sym, avg, filled, len(s["lots"]))
         s.update(buy_order_id=None, buy_price=None, buy_amount=None)
         self._save_state()
+        return False
 
-    def _place_buy(self) -> None:
-        sym, mid = self.cfg.symbol, self._mid()
-        price = float(self.ex.price_to_precision(sym, mid * (1 - self.cfg.buy_offset_pct / 100)))
-        amount = float(self.ex.amount_to_precision(sym, self.cfg.order_usdt / price))
-        if not self.dry:
-            usdt = self.ex.get_usdt_balance()
-            if usdt < self.cfg.order_usdt:
-                log.warning("Buy leg idle: USDT %.2f < %.2f", usdt, self.cfg.order_usdt)
-                return
-            oid = self.ex.create_limit_buy(sym, amount, price)["id"]
-        else:
-            oid = "paper-buy"
-        self.state.update(buy_order_id=oid, buy_price=price, buy_amount=amount)
+    # ----- lots / paired sells -----
+    def _manage_lots(self) -> None:
+        s = self.state
+        kept = []
+        changed = False
+        for lot in s["lots"]:
+            if self._handle_lot(lot):
+                kept.append(lot)
+            else:
+                changed = True
+        if changed:
+            s["lots"] = kept
         self._save_state()
-        log.info("Buy placed: %s @ %.6f x %.8f (mid %.6f, id=%s)", sym, price, amount, mid, oid)
 
-    # ----- sell leg -----
-    def _handle_sell(self) -> None:
+    def _handle_lot(self, lot: dict) -> bool:
+        """Return True to keep the lot open, False to close it (sell filled)."""
         s, sym = self.state, self.cfg.symbol
-        if s["sell_order_id"] is None:
-            self._place_sell()
-            return
+        # place the paired sell if it isn't on the book yet
+        if lot["sell_order_id"] is None:
+            price = float(self.ex.price_to_precision(
+                sym, lot["buy_price"] * (1 + self.cfg.profit_pct / 100)))
+            amount = float(self.ex.amount_to_precision(sym, lot["amount"]))
+            if not self.dry:
+                held = self.ex.get_balance(self.base)
+                if held < amount:
+                    log.warning("Sell idle: %s %.8f < %.8f for lot @ %.6f",
+                                self.base, held, amount, lot["buy_price"])
+                    return True
+                oid = self.ex.create_limit_sell(sym, amount, price)["id"]
+            else:
+                oid = f"paper-sell-{s['sells_filled']}-{lot['buy_price']}"
+            lot["sell_order_id"] = oid
+            lot["sell_price"] = price
+            self._save_state()
+            log.info("Sell placed: %s @ %.6f x %.8f (lot buy %.6f, id=%s)",
+                     sym, price, amount, lot["buy_price"], oid)
+            return True
+        # otherwise check whether it filled
         if self.dry:
-            if self._mid() < s["sell_price"]:
-                return
-            filled, avg = s["sell_amount"], s["sell_price"]
+            if self._mid() < lot["sell_price"]:
+                return True
+            filled, avg = lot["amount"], lot["sell_price"]
         else:
             try:
-                o = self.ex.fetch_order(s["sell_order_id"], sym)
+                o = self.ex.fetch_order(lot["sell_order_id"], sym)
             except Exception as e:
                 log.warning("Could not fetch sell order: %s", e)
-                return
+                return True
             st = o.get("status")
             if st == "canceled":
-                log.warning("Sell canceled externally; clearing leg")
-                s.update(sell_order_id=None, sell_price=None, sell_amount=None)
+                log.warning("Sell canceled externally; will re-place lot @ %.6f", lot["buy_price"])
+                lot["sell_order_id"] = None
+                lot["sell_price"] = None
                 self._save_state()
-                return
+                return True
             if st != "closed":
-                return
-            filled = o.get("filled") or s["sell_amount"]
-            avg = o.get("average") or s["sell_price"]
+                return True
+            filled = o.get("filled") or lot["amount"]
+            avg = o.get("average") or lot["sell_price"]
 
-        proceeds = filled * avg
-        avg_cost = (s["inv_cost"] / s["inv_amount"]) if s["inv_amount"] > 1e-12 else avg
-        profit = proceeds - filled * avg_cost
-        s["inv_amount"] = max(0.0, s["inv_amount"] - filled)
-        s["inv_cost"] = max(0.0, s["inv_cost"] - filled * avg_cost)
+        profit = (avg - lot["buy_price"]) * filled
         s["sells_filled"] += 1
         s["realized_profit"] += profit
         self.logger.record(strategy="grid", symbol=sym, side="sell", order_type="limit",
-                           order_id=s["sell_order_id"], amount=filled, price=avg, proceeds=proceeds,
-                           profit=profit, fee=0, status="filled", cycle=s["sells_filled"])
+                           order_id=lot["sell_order_id"], amount=filled, price=avg,
+                           proceeds=filled * avg, profit=profit, fee=0, status="filled",
+                           cycle=s["sells_filled"])
         self.notifier.send_grid_cycle(sym, profit, s["realized_profit"], s["sells_filled"])
-        log.info("SELL FILLED: %s @ %.6f x %.8f → profit %+.4f USDT (total %+.4f, inv now %.8f %s)",
-                 sym, avg, filled, profit, s["realized_profit"], s["inv_amount"], self.base)
-        s.update(sell_order_id=None, sell_price=None, sell_amount=None)
-        self._save_state()
-
-    def _place_sell(self) -> None:
-        sym, mid = self.cfg.symbol, self._mid()
-        price = float(self.ex.price_to_precision(sym, mid * (1 + self.cfg.profit_pct / 100)))
-        amount = float(self.ex.amount_to_precision(sym, self.cfg.order_usdt / price))
-        if not self.dry:
-            held = self.ex.get_balance(self.base)
-            if held < amount:
-                log.warning("Sell leg idle: %s %.8f < %.8f needed", self.base, held, amount)
-                return
-            oid = self.ex.create_limit_sell(sym, amount, price)["id"]
-        else:
-            if self.state["inv_amount"] < amount:
-                log.warning("Sell leg idle (paper): inv %.8f < %.8f", self.state["inv_amount"], amount)
-                return
-            oid = "paper-sell"
-        self.state.update(sell_order_id=oid, sell_price=price, sell_amount=amount)
-        self._save_state()
-        log.info("Sell placed: %s @ %.6f x %.8f (mid %.6f, id=%s)", sym, price, amount, mid, oid)
+        log.info("SELL FILLED: %s @ %.6f x %.8f -> profit %+.4f USDT (total %+.4f, %d lots left)",
+                 sym, avg, filled, profit, s["realized_profit"], len(s["lots"]) - 1)
+        return False

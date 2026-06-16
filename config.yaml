@@ -15,13 +15,16 @@ coins:
     schedule: "0 8 * * *"
     limit_offset_pct: 0.5
 
-# Single-slot flip grid (separate process: python -m mexc_dca --grid)
-# Buy 50U at -buy_offset%, flip at +profit% — both maker (no fee on MEXC).
+# Paired-flip grid (separate process: python -m mexc_dca --grid)
+# Each filled buy gets its own +profit% sell; lots run concurrently, spaced
+# spacing% apart, capped at max_lots. Both legs maker (no fee on MEXC).
 grid:
   symbol: ETH/USDT
-  order_usdt: 50
-  buy_offset_pct: 0.3              # place buy this % below market
-  profit_pct: 1.0                  # sell this % above buy fill
+  order_usdt: 25
+  buy_offset_pct: 0.3              # first entry buy this % below market
+  profit_pct: 1.0                  # each lot sells this % above its buy
+  spacing_pct: 1.0                 # min gap between consecutive buy lots
+  max_lots: 6                      # max concurrent lots (caps deployed capital ~300U)
   poll_interval_sec: 30
   log_file: grid_trades.jsonl
   state_file: grid_state.json
