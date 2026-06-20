@@ -29,6 +29,16 @@ grid:
   log_file: grid_trades.jsonl
   state_file: grid_state.json
 
+# 24h range-fade (separate daily task: python -m mexc_dca --rangefade)
+# Another "DCA" that fires once a day and places, fire-and-forget:
+#   a maker BUY at the 24h low  +  a maker SELL at the 24h high.
+# Orders are NOT cancelled; they rest until filled. Balance guards skip a side
+# when funds are tied up in resting orders.
+rangefade:
+  symbol: BTC/USDT
+  order_usdt: 25
+  log_file: rangefade_trades.jsonl
+
 telegram:
   chat_id: ""                      # Your Telegram chat ID
   weekly_summary_day: 6            # Sunday

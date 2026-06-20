@@ -40,6 +40,13 @@ class GridConfig:
 
 
 @dataclass
+class RangeFadeConfig:
+    symbol: str = "BTC/USDT"
+    order_usdt: float = 25.0
+    log_file: str = "rangefade_trades.jsonl"
+
+
+@dataclass
 class TelegramConfig:
     enabled: bool = False
     bot_token: str = ""
@@ -54,6 +61,7 @@ class AppConfig:
     coins: list[CoinConfig]
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     grid: GridConfig | None = None
+    rangefade: RangeFadeConfig | None = None
     dry_run: bool = False
     log_file: str = "trades.jsonl"
 
@@ -106,6 +114,15 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
             state_file=g.get("state_file", "grid_state.json"),
         )
 
+    rangefade = None
+    rf = raw.get("rangefade")
+    if rf:
+        rangefade = RangeFadeConfig(
+            symbol=rf.get("symbol", "BTC/USDT"),
+            order_usdt=float(rf.get("order_usdt", 25)),
+            log_file=rf.get("log_file", "rangefade_trades.jsonl"),
+        )
+
     tg_raw = raw.get("telegram", {})
     telegram = TelegramConfig(
         enabled=bool(tg_token and tg_raw.get("chat_id")),
@@ -120,5 +137,6 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         coins=coins,
         telegram=telegram,
         grid=grid,
+        rangefade=rangefade,
         log_file=raw.get("log_file", "trades.jsonl"),
     )

@@ -13,6 +13,7 @@ from .notifier import Notifier
 from .scheduler import build_scheduler
 from .strategy.dca import execute_dca
 from .strategy.grid import GridFlip
+from .strategy.rangefade import execute_rangefade
 
 
 def show_stats(config) -> None:
@@ -160,6 +161,7 @@ def main() -> None:
     parser.add_argument("--stats", action="store_true", help="Show portfolio stats (avg price, total cost, P&L)")
     parser.add_argument("--grid", action="store_true", help="Run the single-slot flip grid strategy (loop)")
     parser.add_argument("--grid-stats", action="store_true", help="Show grid realized profit stats")
+    parser.add_argument("--rangefade", action="store_true", help="Place a 24h-low buy + 24h-high sell once (fire-and-forget)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -192,6 +194,17 @@ def main() -> None:
     # Grid strategy (continuous loop)
     if args.grid:
         run_grid(config)
+        return
+
+    # Range-fade: one-shot 24h-low buy + 24h-high sell
+    if args.rangefade:
+        if not config.rangefade:
+            raise SystemExit("No [rangefade] section in config.yaml")
+        log.info("=== RANGE-FADE run ===")
+        exchange = Exchange(config)
+        trade_logger = TradeLogger(config.rangefade.log_file)
+        notifier = Notifier(config.telegram)
+        execute_rangefade(exchange, config.rangefade, trade_logger, notifier)
         return
 
     # Single buy mode
