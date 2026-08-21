@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from ..config import CoinConfig
 from ..exchange import Exchange
@@ -8,6 +9,92 @@ from ..logger import TradeLogger
 from ..notifier import Notifier
 
 log = logging.getLogger(__name__)
+
+
+def _chase_stale_orders(
+    exchange: Exchange,
+    coin: CoinConfig,
+    trade_logger: TradeLogger,
+    notifier: Notifier,
+) -> None:
+    """Reprice this strategy's open buys after the configured age.
+
+    Each replacement preserves the stale order's remaining quote value and is
+    placed at the current market minus ``limit_offset_pct``.  Other strategies
+    use separate logs, so their order ids are never touched.
+    """
+    if coin.chase_after_hours <= 0:
+        return
+
+    cutoff_seconds = coin.chase_after_hours * 3600
+    now = datetime.now(timezone.utc)
+    candidates: dict[str, dict] = {}
+    for entry in trade_logger.read_all():
+        if entry.get("symbol") != coin.symbol or entry.get("side") != "buy":
+            continue
+        if entry.get("strategy") not in (None, "dca", "dca_chase"):
+            continue
+        order_id = entry.get("order_id")
+        timestamp = entry.get("timestamp")
+        if not order_id or not timestamp or order_id == "dry-run":
+            continue
+        try:
+            age = (now - datetime.fromisoformat(timestamp)).total_seconds()
+        except (TypeError, ValueError):
+            continue
+        if age >= cutoff_seconds:
+            candidates[str(order_id)] = entry
+
+    for order_id, entry in candidates.items():
+        try:
+            order = exchange.fetch_order(order_id, coin.symbol)
+        except Exception as e:
+            log.warning("Could not check stale DCA order %s: %s", order_id, e)
+            continue
+        if order.get("status") != "open":
+            continue
+
+        remaining = float(order.get("remaining") or 0)
+        old_price = float(order.get("price") or entry.get("price") or 0)
+        remaining_usdt = remaining * old_price
+        if remaining_usdt <= 0:
+            continue
+
+        try:
+            exchange.cancel_order(order_id, coin.symbol)
+            market = float(exchange.fetch_ticker(coin.symbol)["last"])
+            new_price = float(exchange.price_to_precision(
+                coin.symbol, market * (1 - coin.limit_offset_pct / 100)
+            ))
+            new_amount = float(exchange.amount_to_precision(
+                coin.symbol, remaining_usdt / new_price
+            ))
+            replacement = exchange.create_limit_buy(coin.symbol, new_amount, new_price)
+        except Exception as e:
+            msg = f"Failed to chase stale DCA order {order_id} for {coin.symbol}: {e}"
+            log.error(msg)
+            notifier.send_error(msg)
+            continue
+
+        trade_logger.record(
+            strategy="dca_chase",
+            symbol=coin.symbol,
+            side="buy",
+            order_type="limit",
+            order_id=replacement["id"],
+            replaces_order_id=order_id,
+            amount=new_amount,
+            price=new_price,
+            cost=remaining_usdt,
+            fee=0,
+            filled=False,
+            status="placed",
+        )
+        log.info(
+            "Repriced stale DCA order: %s %s -> %s @ %.8f (%.2f USDT, age >= %dh)",
+            coin.symbol, order_id, replacement["id"], new_price,
+            remaining_usdt, coin.chase_after_hours,
+        )
 
 
 def execute_dca(
@@ -19,6 +106,9 @@ def execute_dca(
     symbol = coin.symbol
     base_currency = symbol.split("/")[0]
     log.info("=== DCA start: %s, amount=%.2f USDT ===", symbol, coin.amount_usdt)
+
+    # Reprice this coin's old unfilled DCA orders before placing today's lot.
+    _chase_stale_orders(exchange, coin, trade_logger, notifier)
 
     # Check USDT balance
     try:
@@ -64,6 +154,7 @@ def execute_dca(
 
     # Log the placed order
     entry = trade_logger.record(
+        strategy="dca",
         symbol=symbol,
         side="buy",
         order_type="limit",

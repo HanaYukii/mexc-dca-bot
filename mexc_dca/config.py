@@ -22,6 +22,7 @@ class CoinConfig:
     amount_usdt: float
     schedule: str  # cron expression, e.g. "0 9 * * *"
     limit_offset_pct: float = 0.1
+    chase_after_hours: int = 48
     timeout_minutes: int = 5
     withdraw: WithdrawConfig = field(default_factory=WithdrawConfig)
 
@@ -89,6 +90,7 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
                 amount_usdt=float(c["amount_usdt"]),
                 schedule=c["schedule"],
                 limit_offset_pct=float(c.get("limit_offset_pct", 0.1)),
+                chase_after_hours=int(c.get("chase_after_hours", 48)),
                 timeout_minutes=int(c.get("timeout_minutes", 5)),
                 withdraw=WithdrawConfig(
                     enabled=wd.get("enabled", False),
