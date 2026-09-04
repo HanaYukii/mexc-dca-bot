@@ -14,6 +14,7 @@ from .scheduler import build_scheduler
 from .strategy.dca import execute_dca
 from .strategy.grid import GridFlip
 from .strategy.rangefade import execute_rangefade
+from .strategy.rotate import execute_rotate
 
 
 def show_stats(config) -> None:
@@ -162,6 +163,7 @@ def main() -> None:
     parser.add_argument("--grid", action="store_true", help="Run the single-slot flip grid strategy (loop)")
     parser.add_argument("--grid-stats", action="store_true", help="Show grid realized profit stats")
     parser.add_argument("--rangefade", action="store_true", help="Place a 24h-low buy + 24h-high sell once (fire-and-forget)")
+    parser.add_argument("--rotate", action="store_true", help="Rotate: sell sell_symbol +offset%% and buy buy_symbol -offset%% once")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -205,6 +207,17 @@ def main() -> None:
         trade_logger = TradeLogger(config.rangefade.log_file)
         notifier = Notifier(config.telegram)
         execute_rangefade(exchange, config.rangefade, trade_logger, notifier)
+        return
+
+    # Rotate: one-shot sell A +offset% / buy B -offset%
+    if args.rotate:
+        if not config.rotate:
+            raise SystemExit("No [rotate] section in config.yaml")
+        log.info("=== ROTATE run ===")
+        exchange = Exchange(config)
+        trade_logger = TradeLogger(config.rotate.log_file)
+        notifier = Notifier(config.telegram)
+        execute_rotate(exchange, config.rotate, trade_logger, notifier)
         return
 
     # Single buy mode

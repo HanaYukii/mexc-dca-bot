@@ -3,6 +3,7 @@ trades.jsonl
 grid_trades.jsonl
 grid_state.json
 rangefade_trades.jsonl
+rotate_trades.jsonl
 *.log
 __pycache__/
 *.pyc

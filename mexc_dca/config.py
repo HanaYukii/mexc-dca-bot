@@ -48,6 +48,15 @@ class RangeFadeConfig:
 
 
 @dataclass
+class RotateConfig:
+    sell_symbol: str = "ETH/USDT"   # sell this at +offset%
+    buy_symbol: str = "BTC/USDT"    # buy this at -offset%
+    order_usdt: float = 50.0
+    offset_pct: float = 0.3
+    log_file: str = "rotate_trades.jsonl"
+
+
+@dataclass
 class TelegramConfig:
     enabled: bool = False
     bot_token: str = ""
@@ -63,6 +72,7 @@ class AppConfig:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     grid: GridConfig | None = None
     rangefade: RangeFadeConfig | None = None
+    rotate: RotateConfig | None = None
     dry_run: bool = False
     log_file: str = "trades.jsonl"
 
@@ -125,6 +135,17 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
             log_file=rf.get("log_file", "rangefade_trades.jsonl"),
         )
 
+    rotate = None
+    ro = raw.get("rotate")
+    if ro:
+        rotate = RotateConfig(
+            sell_symbol=ro.get("sell_symbol", "ETH/USDT"),
+            buy_symbol=ro.get("buy_symbol", "BTC/USDT"),
+            order_usdt=float(ro.get("order_usdt", 50)),
+            offset_pct=float(ro.get("offset_pct", 0.3)),
+            log_file=ro.get("log_file", "rotate_trades.jsonl"),
+        )
+
     tg_raw = raw.get("telegram", {})
     telegram = TelegramConfig(
         enabled=bool(tg_token and tg_raw.get("chat_id")),
@@ -140,5 +161,6 @@ def load_config(config_path: str = "config.yaml", env_path: str = ".env") -> App
         telegram=telegram,
         grid=grid,
         rangefade=rangefade,
+        rotate=rotate,
         log_file=raw.get("log_file", "trades.jsonl"),
     )

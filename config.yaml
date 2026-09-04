@@ -41,6 +41,17 @@ rangefade:
   order_usdt: 25
   log_file: rangefade_trades.jsonl
 
+# Slow ETH -> BTC rotation (separate daily task: python -m mexc_dca --rotate)
+# Each day, fire-and-forget: sell sell_symbol at +offset%, buy buy_symbol at -offset%.
+# Net effect over time: rotate out of sell_symbol into buy_symbol. Sells only free
+# (unstaked) ETH; balance guards skip a leg when funds are short.
+rotate:
+  sell_symbol: ETH/USDT
+  buy_symbol: BTC/USDT
+  order_usdt: 50
+  offset_pct: 0.3
+  log_file: rotate_trades.jsonl
+
 telegram:
   chat_id: ""                      # Your Telegram chat ID
   weekly_summary_day: 6            # Sunday
