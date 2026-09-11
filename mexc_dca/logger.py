@@ -14,13 +14,15 @@ class TradeLogger:
         self.path = Path(log_file)
 
     def record(self, **fields: Any) -> dict:
+        quiet = fields.pop("_quiet", False)  # bookkeeping rows (dca_resolved) skip the INFO line
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **fields,
         }
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        log.info("Trade logged: %s %s @ %s", fields.get("symbol"), fields.get("side"), fields.get("price"))
+        if not quiet:
+            log.info("Trade logged: %s %s @ %s", fields.get("symbol"), fields.get("side"), fields.get("price"))
         return entry
 
     def read_recent(self, days: int = 7) -> list[dict]:
