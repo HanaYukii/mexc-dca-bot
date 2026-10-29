@@ -1,8 +1,8 @@
 # MEXC DCA Bot Configuration
 # API keys are in .env (not here!)
 
-# Schedule: Daily at 9:00 AM (local time)
-# Total per day: 65 USDT (BTC 50 / BNB 15)
+# Schedule: Daily at 8:00 AM (local time)
+# Total per day: 50 USDT (BTC only; BNB paused 2026-10-29)
 
 coins:
   - symbol: BTC/USDT
@@ -10,12 +10,6 @@ coins:
     schedule: "0 8 * * *"           # Daily at 8:00 AM
     limit_offset_pct: 0.2            # 0.2% below market
     chase_after_hours: 48            # reprice stale open orders after 2 days
-
-  - symbol: BNB/USDT
-    amount_usdt: 15
-    schedule: "0 8 * * *"
-    limit_offset_pct: 0.2
-    chase_after_hours: 48
 
 # Paired-flip grid (separate process: python -m mexc_dca --grid)
 # Each filled buy gets its own +profit% sell; lots run concurrently, spaced
